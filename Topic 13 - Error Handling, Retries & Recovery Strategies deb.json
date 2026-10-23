@@ -1,0 +1,90 @@
+{
+  "name": "Topic 13 - Error Handling, Retries & Recovery Strategies deb",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -320,
+        -16
+      ],
+      "id": "8b797051-2183-4d3b-94bd-10f0a9c87550",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn [\n  {\n    json: {\n      transactionId: \"TX-CRASH-801\",\n      customerEmail: \"vip-client@enterprise.org\",\n      amount: 1450.00,\n      simulateFault: \"GATEWAY_TIMEOUT_504\"\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -128,
+        -16
+      ],
+      "id": "57049e3c-c4df-4cb8-91a2-449d880d51b2",
+      "name": "Code_SimulateFailingOrder"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://httpstat.us/504",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "=\n\n{{ JSON.stringify({\n  transactionId: $json.transactionId,\n  customerEmail: $json.customerEmail,\n  amount: $json.amount,\n  simulateFault: $json.simulateFault\n}) }}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        96,
+        -16
+      ],
+      "id": "c64b6286-9513-4e77-8b2b-fc07bc5af542",
+      "name": "HTTP_FlakyPaymentGateway",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Code_SimulateFailingOrder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_SimulateFailingOrder": {
+      "main": [
+        [
+          {
+            "node": "HTTP_FlakyPaymentGateway",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "SOKBmkW1qg9aycQr",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "4c5258c0-405f-4bde-b33c-7dbfe6861e5a",
+  "meta": {
+    "instanceId": "a03c7678428ef19ededbf912f16f7d5798ec7b9ab4c17f2a2def6a9e791e7215"
+  },
+  "nodeGroups": [],
+  "id": "Frynes8Otfoy5WB9",
+  "tags": []
+}

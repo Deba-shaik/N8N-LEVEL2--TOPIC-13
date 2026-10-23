@@ -1,0 +1,237 @@
+{
+  "name": "Topic 13 - Error Recovery Handler deb",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -464,
+        16
+      ],
+      "id": "ed733279-baea-4632-9bd4-f1c8f884c6b7",
+      "name": "Error_Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst input = $input.first().json;\n\nconst execution = input.execution || {};\nconst workflow = input.workflow || {};\nconst error = execution.error || input.trigger?.error || {};\n\nconst failedNode =\n  execution.lastNodeExecuted ||\n  error.node?.name ||\n  \"Unknown\";\n\nconst executionId = execution.id || \"Unknown\";\n\nconst errorMessage =\n  error.message ||\n  error.description ||\n  \"Unknown error\";\n\nconst errorType =\n  error.httpCode ||\n  error.statusCode ||\n  error.code ||\n  \"UNKNOWN\";\n\nconst messageText = String(errorMessage).toLowerCase();\n\nlet recoveryType = \"PERMANENT\";\n\nif (\n  messageText.includes(\"timeout\") ||\n  messageText.includes(\"connection\") ||\n  messageText.includes(\"closed unexpectedly\") ||\n  [\"408\", \"429\", \"502\", \"503\", \"504\"].includes(String(errorType))\n) {\n  recoveryType = \"TRANSIENT\";\n}\n\nreturn [\n  {\n    json: {\n      event: \"WORKFLOW_EXECUTION_FAILED\",\n      workflowId: workflow.id || \"Unknown\",\n      workflowName: workflow.name || \"Unknown\",\n      executionId,\n      failedNode,\n      errorMessage,\n      errorType,\n      recoveryType,\n      incidentTime: new Date().toISOString(),\n      dlqStatus: \"PENDING\"\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        16
+      ],
+      "id": "abfe47e4-b826-4fc4-bd37-09144e6c48ba",
+      "name": "Code_ExtractDiagnostics"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\nconst incident = $input.item.json;\n\nconst dlqRecord = {\n  dlqId: `DLQ-${Date.now()}`,\n  workflowName: incident.workflowName,\n  executionId: incident.executionId,\n  failedNode: incident.failedNode,\n  errorMessage: incident.errorMessage,\n  errorType: incident.errorType,\n  recoveryType: incident.recoveryType,\n  incidentTime: incident.incidentTime,\n  dlqStatus: \"PENDING\",\n  retryCount: 0,\n  createdAt: new Date().toISOString()\n};\n\nreturn {\n  json: dlqRecord\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        16
+      ],
+      "id": "ea9920a5-a2b1-47a3-a904-5a52cf9f7d81",
+      "name": "Code_PersistToDLQ"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.recoveryType }}",
+                    "rightValue": "TRANSIENT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "52f56be1-5be4-4b23-8fc9-fe1d7889b5d7"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "f7008aa4-d9b8-46c4-89d6-7998201202d0",
+                    "leftValue": "={{ $json.recoveryType }}",
+                    "rightValue": "PERMANENT",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        160,
+        16
+      ],
+      "id": "a7d0bb7d-9523-48d4-88b3-4d73bac574a1",
+      "name": "Switch_ClassifyRecovery"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\nconst item = $input.item.json;\n\nreturn {\n  json: {\n    ...item,\n    recoveryAction: \"RETRY_SCHEDULED\",\n    dlqStatus: \"PENDING_RETRY\",\n    retryCount: item.retryCount + 1,\n    nextRetryAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),\n    message: \"Temporary failure scheduled for retry after 5 minutes\"\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        -96
+      ],
+      "id": "4f8b8243-af26-452c-8061-948c6173e8d0",
+      "name": "Code_ScheduleReplay"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\nconst item = $input.item.json;\n\nreturn {\n  json: {\n    ...item,\n    recoveryAction: \"ESCALATED_TO_ENGINEERING\",\n    dlqStatus: \"ESCALATED\",\n    priority: \"HIGH\",\n    assignedTeam: \"Engineering Support\",\n    escalatedAt: new Date().toISOString(),\n    message: \"Permanent failure requires manual investigation\"\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        144
+      ],
+      "id": "211a4195-49f6-42c5-be9d-12f5c3ee0418",
+      "name": "Code_EscalateIncident"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\nconst item = $input.item.json;\n\nreturn {\n  json: {\n    event: \"RECOVERY_AUDIT\",\n    dlqId: item.dlqId,\n    executionId: item.executionId,\n    failedNode: item.failedNode,\n    recoveryType: item.recoveryType,\n    recoveryAction: item.recoveryAction,\n    dlqStatus: item.dlqStatus,\n    nextRetryAt: item.nextRetryAt || null,\n    assignedTeam: item.assignedTeam || null,\n    auditedAt: new Date().toISOString()\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        0
+      ],
+      "id": "661f6a38-37bf-460d-81e7-7e976778fec4",
+      "name": "Code_RecoveryAudit"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Error_Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code_ExtractDiagnostics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_ExtractDiagnostics": {
+      "main": [
+        [
+          {
+            "node": "Code_PersistToDLQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_PersistToDLQ": {
+      "main": [
+        [
+          {
+            "node": "Switch_ClassifyRecovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch_ClassifyRecovery": {
+      "main": [
+        [
+          {
+            "node": "Code_ScheduleReplay",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code_EscalateIncident",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_ScheduleReplay": {
+      "main": [
+        [
+          {
+            "node": "Code_RecoveryAudit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_EscalateIncident": {
+      "main": [
+        [
+          {
+            "node": "Code_RecoveryAudit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "6e5f3a33-414f-4854-9d96-3095ef4ed939",
+  "meta": {
+    "instanceId": "a03c7678428ef19ededbf912f16f7d5798ec7b9ab4c17f2a2def6a9e791e7215"
+  },
+  "nodeGroups": [],
+  "id": "SOKBmkW1qg9aycQr",
+  "tags": []
+}
